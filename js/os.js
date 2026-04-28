@@ -188,8 +188,8 @@ window.enviarWppB2C = function(id) {
     // Link correto: governo → clienteOficial, demais → cliente
     const isGov = cli?.tipoCliente === 'governo';
     const link = isGov
-      ? 'https://tsvalencio-ia.github.io/of/clienteOficial.html'
-      : 'https://tsvalencio-ia.github.io/of/cliente.html';
+      ? 'https://tsvalencio-ia.github.io/erp2704-1942/clienteOficial.html'
+      : 'https://tsvalencio-ia.github.io/erp2704-1942/cliente.html';
 
     const totalFmt = (os.total || 0).toFixed(2).replace('.', ',');
 
@@ -1301,7 +1301,7 @@ window.gerarPDFOS = async function() {
   
   doc.setFillColor(6, 10, 20); doc.rect(0, 0, pw, 35, 'F');
   doc.setTextColor(0, 212, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(22);
-  doc.text('J.A.R.V.I.S — LAUDO TÉCNICO', pw / 2, 18, { align: 'center' });
+  doc.text('t.h.I.A.g.u.i.n.h.o. — LAUDO TÉCNICO', pw / 2, 18, { align: 'center' });
   doc.setFontSize(9); doc.setTextColor(200, 200, 200);
   doc.text(J.tnome + ' · ' + new Date().toLocaleDateString('pt-BR'), pw / 2, 27, { align: 'center' });
   y = 45;
