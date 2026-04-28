@@ -9,11 +9,7 @@
   "background_color": "#060A14",
   "theme_color": "#00D4FF",
   "lang": "pt-BR",
-  "categories": [
-    "productivity",
-    "automotive",
-    "business"
-  ],
+  "categories": ["productivity", "automotive", "business"],
   "icons": [
     {
       "src": "assets/icon-192.png",

@@ -270,9 +270,7 @@ body{background:var(--bg0);color:var(--text);font-family:var(--ff);min-height:10
         <button class="btn-gov" onclick="_salvarAgendamento()">ENVIAR SOLICITAÇÃO</button>
       </div>
       <div id="renderAgd"></div>
-    </div>
-
-    <!-- TAB: HISTÓRICO -->
+    </div>    <!-- TAB: HISTÓRICO -->
     <div class="tab-content" id="tHist">
       <div style="background:var(--bg1);border:1px solid var(--border);border-radius:var(--rx);overflow:hidden;margin-bottom:14px">
         <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-family:var(--disp);font-weight:700;font-size:1rem;color:var(--gov)">📜 OS Concluídas</div>
@@ -475,31 +473,27 @@ function _buildOSCard(os){
         </div>
       </div>`:''
 
-  // Detalhes expandidos — usa valores JÁ calculados e salvos na OS
+  // Detalhes — aplica desconto do batalhão (govDescMO / govDescPeca) sobre valores brutos
+  const pctDescMO   = parseFloat(CLI.govDescMO   || 0);
+  const pctDescPeca = parseFloat(CLI.govDescPeca || 0);
+
   let totalMO=0,totalTMO=0,totalPec=0;
-  const descPctMO   = parseFloat(CLI?.govDescMO   || 0); // percentual inteiro (ex: 21)
-  const descPctPeca = parseFloat(CLI?.govDescPeca  || 0);
   const lsServ=(os.servicos||[]).map(s=>{
     const t=parseFloat(s.tempo||0);
-    const vb=parseFloat(s.valor||0); // valor bruto salvo
-    const vdesc = +(vb * (descPctMO / 100)).toFixed(2);
-    const vf    = +(vb - vdesc).toFixed(2);
+    const vBruto=parseFloat(s.valor||0);
+    const vf=+(vBruto*(1-pctDescMO)).toFixed(2);
     totalMO+=vf; totalTMO+=t;
-    const badgeDesc = descPctMO>0 ? `<span style="background:rgba(52,211,153,0.15);color:var(--ok);border:1px solid rgba(52,211,153,0.4);border-radius:4px;font-size:.58rem;padding:1px 6px;margin-left:6px;">−${descPctMO}%</span>` : '';
-    const brutoRiscado = descPctMO>0 ? `<s style="color:var(--muted);font-size:.75rem;">${moeda(vb)}</s> ` : '';
-    return `<div class="detalhe-row"><span>${esc(s.desc||'—')}<br><small style="color:var(--muted)">${esc(s.sistemaTabela||'')}${t?` · ${t}h`:''}</small></span><span class="detalhe-val">${brutoRiscado}${badgeDesc}<br>${moeda(vf)}</span></div>`;
+    const riscado=pctDescMO>0?`<span style="color:var(--muted);text-decoration:line-through;font-size:.75rem">${moeda(vBruto)}</span> <span style="color:var(--ok);font-size:.7rem">-${(pctDescMO*100).toFixed(0)}%</span> `:'';
+    return `<div class="detalhe-row"><span>${esc(s.desc||'—')}<br><small style="color:var(--muted)">${esc(s.sistemaTabela||'')}${t?` · ${t}h`:''}</small></span><span class="detalhe-val" style="text-align:right">${riscado}${moeda(vf)}</span></div>`;
   }).join('');
 
   const lsPec=(os.pecas||[]).map(p=>{
-    const q=parseFloat(p.qtd||1);
-    const vl=parseFloat(p.venda||0);
-    const vlDesc  = +(vl * (descPctPeca / 100)).toFixed(2);
-    const vlFinal = +(vl - vlDesc).toFixed(2);
-    const vf      = +(q * vlFinal).toFixed(2);
+    const q=parseFloat(p.qtd||1),vl=parseFloat(p.venda||0);
+    const vBruto=+(q*vl).toFixed(2);
+    const vf=+(vBruto*(1-pctDescPeca)).toFixed(2);
     totalPec+=vf;
-    const badgeDesc = descPctPeca>0 ? `<span style="background:rgba(52,211,153,0.15);color:var(--ok);border:1px solid rgba(52,211,153,0.4);border-radius:4px;font-size:.58rem;padding:1px 6px;margin-left:4px;">−${descPctPeca}%</span>` : '';
-    const brutoRiscado = descPctPeca>0 ? `<s style="color:var(--muted);font-size:.72rem;">${moeda(vl)}/un</s> ` : '';
-    return `<div class="detalhe-row"><span><code style="font-size:.7rem;color:var(--gov)">${esc(p.codigo||'—')}</code> ${esc(p.desc||'—')}<br><small style="color:var(--muted)">${q}× ${brutoRiscado}${moeda(vlFinal)}${badgeDesc}</small></span><span class="detalhe-val">${moeda(vf)}</span></div>`;
+    const riscado=pctDescPeca>0?`<span style="color:var(--muted);text-decoration:line-through;font-size:.75rem">${moeda(vBruto)}</span> <span style="color:var(--ok);font-size:.7rem">-${(pctDescPeca*100).toFixed(0)}%</span> `:'';
+    return `<div class="detalhe-row"><span><code style="font-size:.7rem;color:var(--gov)">${esc(p.codigo||'—')}</code> ${esc(p.desc||'—')}<br><small style="color:var(--muted)">${q}× ${moeda(vl)}</small></span><span class="detalhe-val" style="text-align:right">${riscado}${moeda(vf)}</span></div>`;
   }).join('');
 
   const fotos=((os.media||[]).concat(os.fotos||[])).filter(m=>m);
@@ -544,20 +538,20 @@ function _buildOSCard(os){
     </div>`:''}
 
     ${lsServ?`<div style="margin-bottom:16px">
-      <div style="font-family:var(--mono);font-size:.63rem;color:var(--brand);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">MÃO DE OBRA (${totalTMO.toFixed(2).replace('.',',')}h)${descPctMO>0?' · Desc. contrato: '+descPctMO+'%':''}</div>
+      <div style="font-family:var(--mono);font-size:.63rem;color:var(--brand);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">MÃO DE OBRA (${totalTMO.toFixed(2).replace('.',',')}h)${pctDescMO>0?` · Desc. contrato: ${(pctDescMO*100).toFixed(0)}%`:''}</div>
       ${lsServ}
-      <div style="display:flex;justify-content:flex-end;padding-top:6px;font-family:var(--mono);font-size:.75rem;color:var(--muted)">Subtotal MO: <strong style="color:var(--text);margin-left:8px">${moeda(totalMO)}</strong></div>
+      <div style="display:flex;justify-content:flex-end;padding-top:6px;font-family:var(--mono);font-size:.75rem;color:var(--muted)">Subtotal MO c/ desconto: <strong style="color:var(--text);margin-left:8px">${moeda(totalMO)}</strong></div>
     </div>`:''}
 
     ${lsPec?`<div style="margin-bottom:16px">
-      <div style="font-family:var(--mono);font-size:.63rem;color:var(--ok);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">PEÇAS APLICADAS</div>
+      <div style="font-family:var(--mono);font-size:.63rem;color:var(--ok);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">PEÇAS APLICADAS${pctDescPeca>0?` · Desc. contrato: ${(pctDescPeca*100).toFixed(0)}%`:''}</div>
       ${lsPec}
-      <div style="display:flex;justify-content:flex-end;padding-top:6px;font-family:var(--mono);font-size:.75rem;color:var(--muted)">Subtotal Peças: <strong style="color:var(--text);margin-left:8px">${moeda(totalPec)}</strong></div>
+      <div style="display:flex;justify-content:flex-end;padding-top:6px;font-family:var(--mono);font-size:.75rem;color:var(--muted)">Subtotal Peças c/ desconto: <strong style="color:var(--text);margin-left:8px">${moeda(totalPec)}</strong></div>
     </div>`:''}
 
     ${lsServ||lsPec?`<div style="background:var(--gov-dim);border:1px solid var(--border-s);border-radius:var(--r);padding:14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <span style="font-family:var(--disp);font-weight:700;font-size:1rem">VALOR DO CONTRATO</span>
-      <span style="font-family:var(--mono);font-size:1.15rem;font-weight:700;color:var(--gov)">${moeda(os.total||totalMO+totalPec)}</span>
+      <span style="font-family:var(--mono);font-size:1.15rem;font-weight:700;color:var(--gov)">${moeda(totalMO+totalPec)}</span>
     </div>`:''}
 
     ${fotosHtml}

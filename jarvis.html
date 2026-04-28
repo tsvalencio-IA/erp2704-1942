@@ -801,6 +801,159 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
       </div>
     </section>
 
+
+// ══════════════════════════════════════════════════════════════════════
+// IA DO JARVIS — thIAguinho ADMIN
+// Acessa dados reais: OS, financeiro, estoque, equipe, comissões
+// Usa Gemini Flash — sem alucinação, SOMENTE dados do sistema
+// ══════════════════════════════════════════════════════════════════════
+let _jiaHist = [];
+
+function _buildContextoIA() {
+  const hoje = new Date();
+  const mesAtual = hoje.toISOString().slice(0,7); // YYYY-MM
+
+  // ── OS ──
+  let osCtx = '';
+  (J.os || []).forEach(o => {
+    const cli = (J.clientes||[]).find(c=>c.id===o.clienteId)||{};
+    const veic = (J.veiculos||[]).find(v=>v.id===o.veiculoId)||{};
+    const servs = (o.servicos||[]).map(s=>`${s.desc}(${s.tempo||0}h R$${s.valor||0})`).join(', ');
+    const pecas = (o.pecas||[]).map(p=>`${p.desc||p.codigo} x${p.qtd||1} R$${p.venda||0}`).join(', ');
+    const reais = (o.pecasReais||[]).map(p=>`[REAL]${p.desc||p.codigo} x${p.qtd||1} NF:${p.nf||'-'} Fornec:${p.fornecedor||'-'} R$${p.valorCompra||0}`).join(', ');
+    osCtx += `OS#${(o.id||'').slice(-6)} | ${o.status||'?'} | Cli:${cli.nome||o.cliente||'?'} | Veic:${veic.placa||o.placa||'?'} ${veic.modelo||o.veiculo||''} | KM:${o.km||'?'} | Data:${o.data||''} | Total:R$${o.total||0} | Serv:[${servs}] | Peças:[${pecas}]${reais?` | ReaisInstaladas:[${reais}]`:''} | EntregueA:${o.entreguePara||'-'}
+`;
+  });
+
+  // ── FINANCEIRO ──
+  const finHoje = (J.financeiro||[]).filter(f=>{
+    try { return new Date(f.data||f.vencimento).toDateString()===hoje.toDateString(); } catch(e){return false;}
+  });
+  const finMes = (J.financeiro||[]).filter(f=>{
+    try { return (f.data||f.vencimento||'').startsWith(mesAtual); } catch(e){return false;}
+  });
+  const contasPagar = finHoje.filter(f=>f.tipo==='despesa'||f.tipo==='saida');
+  const receitasMes = finMes.filter(f=>f.tipo==='receita'||f.tipo==='entrada').reduce((s,f)=>s+parseFloat(f.valor||0),0);
+  const despMes = finMes.filter(f=>f.tipo==='despesa'||f.tipo==='saida').reduce((s,f)=>s+parseFloat(f.valor||0),0);
+  const saldo = receitasMes - despMes;
+
+  let finCtx = `FINANCEIRO ${mesAtual}: Receitas=R$${receitasMes.toFixed(2)} Despesas=R$${despMes.toFixed(2)} Saldo=R$${saldo.toFixed(2)}
+`;
+  finCtx += `CONTAS PAGAR HOJE(${hoje.toLocaleDateString('pt-BR')}): ${contasPagar.length ? contasPagar.map(f=>`${f.desc||f.descricao||'?'} R$${f.valor||0}`).join('; ') : 'Nenhuma'}
+`;
+
+  // ── ESTOQUE ──
+  const estCrit = (J.estoque||[]).filter(p=>parseFloat(p.qtd||0)<=parseFloat(p.min||0));
+  const estCtx = `ESTOQUE: ${(J.estoque||[]).length} itens. Críticos(abaixo min): ${estCrit.length>0 ? estCrit.map(p=>`${p.desc}(${p.qtd}un)`).join(', ') : 'Nenhum'}
+`;
+
+  // ── EQUIPE / COMISSÕES ──
+  let equCtx = '';
+  (J.equipe||[]).forEach(e => {
+    const osMec = (J.os||[]).filter(o=>o.mecId===e.id&&(o.data||'').startsWith(mesAtual));
+    const totalMec = osMec.reduce((s,o)=>s+parseFloat(o.maoObra||o.total||0),0);
+    const comissao = +(totalMec * parseFloat(e.comissao||0)).toFixed(2);
+    equCtx += `Func:${e.nome||'?'} Cargo:${e.cargo||'?'} Salário:R$${e.salario||0} Comissão%:${(parseFloat(e.comissao||0)*100).toFixed(0)}% OS no mês:${osMec.length} MO gerada:R$${totalMec.toFixed(2)} Comissão a pagar:R$${comissao}
+`;
+  });
+
+  // ── CLIENTES / VEÍCULOS ──
+  const cliCtx = `CLIENTES: ${(J.clientes||[]).length} cadastrados. VEÍCULOS: ${(J.veiculos||[]).length} cadastrados.
+`;
+
+  return [
+    `=== CONTEXTO REAL DO SISTEMA thIAguinho (${new Date().toLocaleString('pt-BR')}) ===`,
+    `OFICINA: ${J.tnome||'?'} | USUÁRIO: ${J.nome||'?'}`,
+    cliCtx,
+    `=== ORDENS DE SERVIÇO (${(J.os||[]).length} total) ===`,
+    osCtx || 'Nenhuma OS cadastrada.',
+    `=== FINANCEIRO ===`,
+    finCtx,
+    estCtx,
+    `=== EQUIPE (${(J.equipe||[]).length} funcionários) ===`,
+    equCtx || 'Sem funcionários cadastrados.',
+    `=== FIM DO CONTEXTO ===`
+  ].join('
+');
+}
+
+async function _jiaChamar(pergunta) {
+  const key = J.gemini || J.oficina?.apiKeys?.gemini || J.oficina?.geminiKey || null;
+  const ctx = _buildContextoIA();
+
+  _jiaAddMsg('user', pergunta);
+  const lidDiv = _jiaAddMsg('bot', '<span class="j-spinner"></span> Processando...');
+
+  if (!key) {
+    lidDiv.innerHTML = `<strong>thIAguinho:</strong> ⚠ Chave Gemini não configurada. Vá em Configurações → API Keys → Gemini e adicione sua chave para ativar a IA.`;
+    return;
+  }
+
+  try {
+    const msgs = _jiaHist.map(h=>({role:h.r==='user'?'user':'model',parts:[{text:h.t}]}));
+    const sysPrompt = `Você é o thIAguinho, assistente administrativo da oficina ${J.tnome||''}. 
+REGRAS ABSOLUTAS:
+1. Responda APENAS com base nos dados reais do sistema fornecidos abaixo. NUNCA invente valores, nomes, datas ou informações.
+2. Se a informação não estiver nos dados, diga "Não encontrei essa informação no sistema." Não suponha.
+3. Seja direto, objetivo e use formatação clara (listas quando necessário).
+4. Para perguntas financeiras, use APENAS os dados do campo FINANCEIRO.
+5. Para histórico de veículos, use APENAS os dados do campo ORDENS DE SERVIÇO.
+6. Para salários e comissões, use APENAS os dados do campo EQUIPE.
+
+${ctx}`;
+
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(key)}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        contents: msgs,
+        systemInstruction: { parts: [{ text: sysPrompt }] }
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+    const resp = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!resp) throw new Error('Resposta vazia da IA.');
+    _jiaHist.push({r:'bot', t:resp});
+    lidDiv.innerHTML = `<strong>thIAguinho:</strong> ${resp.replace(/
+/g,'<br>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')}`;
+  } catch(e) {
+    lidDiv.innerHTML = `<strong>thIAguinho:</strong> ❌ Erro: ${e.message}`;
+  }
+}
+
+function _jiaAddMsg(tipo, html) {
+  const c = document.getElementById('iaMsgs'); if(!c) return {innerHTML:''};
+  const d = document.createElement('div');
+  d.className = `ia-msg ${tipo==='user'?'user':'bot'}`;
+  d.innerHTML = tipo==='user' ? `<strong>Você:</strong> ${html}` : html;
+  c.appendChild(d);
+  c.scrollTop = c.scrollHeight;
+  _jiaHist.push({r:tipo, t:html.replace(/<[^>]*>/g,'')});
+  return d;
+}
+
+window.iaPerguntar = function() {
+  const inp = document.getElementById('iaInput');
+  const msg = inp?.value?.trim();
+  if (!msg) return;
+  inp.value = '';
+  _jiaChamar(msg);
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('iaInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') window.iaPerguntar();
+  });
+});
+
+window.iaAnalisarDRE = function() {
+  _jiaChamar('Analise o DRE do mês atual: receitas, despesas, saldo, e me diga se está saudável ou se há alertas.');
+};
+
+window.iaAnalisarEstoque = function() {
+  _jiaChamar('Analise o estoque atual: quais itens estão abaixo do mínimo, quais precisam ser comprados urgente, e o total em estoque.');
+};
+
     <section class="section" id="s-tabelatempa">
       <div class="j-card">
         <div class="j-card-header">
@@ -874,10 +1027,9 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
     </div>
   </div>
   <div class="modal-tabs">
-    <div class="mtab active" onclick="switchTab(this,'tabOS1','tabOS2','tabOS3','tabOS4')">1. ORÇAMENTO & SERVIÇOS</div>
-    <div class="mtab" onclick="switchTab(this,'tabOS2','tabOS1','tabOS3','tabOS4')">2. PROVAS & CHECKLIST</div>
-    <div class="mtab" onclick="switchTab(this,'tabOS3','tabOS1','tabOS2','tabOS4')">3. AUDITORIA (TIMELINE)</div>
-    <div class="mtab" id="tabOS4Btn" style="display:none;color:#A78BFA;" onclick="switchTab(this,'tabOS4','tabOS1','tabOS2','tabOS3')">🔒 4. PEÇAS REAIS (ADMIN)</div>
+    <div class="mtab active" onclick="switchTab(this,'tabOS1','tabOS2','tabOS3')">1. ORÇAMENTO & SERVIÇOS</div>
+    <div class="mtab" onclick="switchTab(this,'tabOS2','tabOS1','tabOS3')">2. PROVAS & CHECKLIST</div>
+    <div class="mtab" onclick="switchTab(this,'tabOS3','tabOS1','tabOS2')">3. AUDITORIA (TIMELINE)</div>
   </div>
   <div class="tab-pane active" id="tabOS1">
     
@@ -897,7 +1049,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
       </div>
       <div class="form-group">
         <label class="j-label">Status Kanban</label>
-<select class="j-select" id="osStatus" onchange="window.verificarStatusOS()">
+<select class="j-select" id="osStatus" onchange="window.verificarStatusOS();(function(){var r=document.getElementById('rowEntregueA');if(r)r.style.display=this.value==='Entregue'?'flex':'none';}).call(this)">
           <option value="Triagem">Triagem / Avaliação</option>
           <option value="Orcamento">Em Orçamento</option>
           <option value="Orcamento_Enviado">Orçamento Enviado (Aguard. Aprovação)</option>
@@ -907,6 +1059,13 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
           <option value="Entregue">Veículo Entregue (Concluído)</option>
           <option value="Cancelado">Cancelado</option>
         </select>
+      </div>
+    </div>
+    <!-- Campo entregue para quem — aparece só quando status = Entregue -->
+    <div class="form-row" id="rowEntregueA" style="display:none;margin-top:8px;">
+      <div class="form-group" style="flex:1">
+        <label class="j-label">✅ Entregue para (nome + cargo/função)</label>
+        <input type="text" class="j-input" id="osEntregueA" placeholder="Ex: CB PM João Silva — Motorista designado" oninput="">
       </div>
     </div>
     <div class="form-row cols-2">
@@ -962,35 +1121,63 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
     <div style="background:var(--surf3);border:1px solid rgba(0,255,136,0.15);border-radius:3px;padding:18px;margin-top:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
         <div style="font-family:var(--fd);font-size:1rem;font-weight:700;color:var(--success);">PEÇAS DO ESTOQUE</div>
-        <button type="button" class="btn-success" onclick="window.adicionarPecaOS()">+ ADICIONAR PEÇA</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button type="button" style="background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.35);color:#00D4FF;padding:6px 14px;border-radius:3px;font-family:var(--fm);font-size:0.72rem;font-weight:700;cursor:pointer;letter-spacing:.5px;" onclick="document.getElementById('ciliaFileInput').click()" title="Importar PDF ou XML exportado do sistema Cília">📂 IMPORTAR CÍLIA</button>
+          <input type="file" id="ciliaFileInput" style="display:none" accept=".pdf,.xml,.PDF,.XML" onchange="window.importarCilia(this)">
+          <button type="button" class="btn-success" onclick="window.adicionarPecaOS()">+ ADICIONAR PEÇA</button>
+        </div>
       </div>
       <div class="cabecalho-pecas" style="display:grid;grid-template-columns:1fr 80px 90px 90px 32px;gap:8px;margin-bottom:6px;font-family:var(--fm);font-size:0.65rem;color:var(--muted);text-transform:uppercase;font-weight:bold;">
         <div>Peça / Produto</div><div>Qtd</div><div>Custo(R$)</div><div>Venda(R$)</div><div>Del</div>
       </div>
       <div id="containerPecasOS" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
       
-      <!-- Resumo desconto gov (aparece só para clientes governo) -->
-      <div id="areaDescontoGov" style="display:none;background:rgba(167,139,250,0.06);border:1px solid rgba(167,139,250,0.2);border-radius:3px;padding:12px 14px;margin-bottom:8px;">
-        <div style="font-family:var(--fm);font-size:0.65rem;color:#A78BFA;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">🛡 Desconto do Contrato</div>
-        <div style="display:flex;flex-wrap:wrap;gap:14px;font-family:var(--fm);font-size:0.78rem;">
-          <span>M.O. bruta: <strong id="govBrutoMO">R$ 0,00</strong></span>
-          <span style="color:var(--warn);">Desc. MO (<span id="govPctMO">0</span>%): <strong id="govDescontoMO">−R$ 0,00</strong></span>
-          <span style="color:var(--success);">M.O. c/ desc.: <strong id="govLiquidoMO">R$ 0,00</strong></span>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:14px;font-family:var(--fm);font-size:0.78rem;margin-top:6px;">
-          <span>Peças brutas: <strong id="govBrutoPeca">R$ 0,00</strong></span>
-          <span style="color:var(--warn);">Desc. Peças (<span id="govPctPeca">0</span>%): <strong id="govDescontoPeca">−R$ 0,00</strong></span>
-          <span style="color:var(--success);">Peças c/ desc.: <strong id="govLiquidoPeca">R$ 0,00</strong></span>
-        </div>
-      </div>
       <div style="display:flex;justify-content:flex-end;align-items:center;gap:20px;padding:14px;background:rgba(0,255,136,0.05);border-radius:3px;border:1px dashed rgba(0,255,136,0.2);">
-        <div style="text-align:right;">
-          <span style="font-family:var(--fm);font-size:0.7rem;color:var(--muted);">TOTAL DA O.S.:</span>
-          <div id="osGovTotalBrutoBox" style="display:none;font-family:var(--fm);font-size:0.75rem;color:var(--muted);"><s id="osGovTotalBruto">R$ 0,00</s> <span style="color:#A78BFA;font-size:0.65rem;margin-left:4px;" id="osGovTotalDescBadge"></span></div>
-        </div>
+        <span style="font-family:var(--fm);font-size:0.7rem;color:var(--muted);">TOTAL DA O.S.:</span>
         <span style="font-family:var(--fd);font-size:2rem;font-weight:700;color:var(--success);">R$ <span id="osTotalVal">0,00</span></span>
         <input type="hidden" id="osTotalHidden" value="0">
       </div>
+    </div>
+
+    <!-- ════ DESCONTO PERSONALIZADO POR OS (sobrescreve padrão do cadastro) ════ -->
+    <div id="blocoDescontoOS" style="display:none;background:rgba(167,139,250,0.06);border:1px solid rgba(167,139,250,0.25);border-radius:3px;padding:14px;margin-top:12px;">
+      <div style="font-family:var(--fm);font-size:0.7rem;color:#A78BFA;letter-spacing:1.5px;font-weight:700;margin-bottom:10px;">🛡 DESCONTO DESTA OS (sobrescreve padrão do cliente)</div>
+      <div class="form-row cols-2">
+        <div class="form-group">
+          <label class="j-label">Desc. Mão Obra desta OS (%)</label>
+          <input type="number" step="0.1" min="0" max="100" class="j-input" id="osDescMO" placeholder="Ex: 21" oninput="window.calcOSTotal()" title="Deixe em branco para usar o desconto padrão do cadastro do cliente">
+        </div>
+        <div class="form-group">
+          <label class="j-label">Desc. Peças desta OS (%)</label>
+          <input type="number" step="0.1" min="0" max="100" class="j-input" id="osDescPeca" placeholder="Ex: 20" oninput="window.calcOSTotal()" title="Deixe em branco para usar o desconto padrão do cadastro do cliente">
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ PEÇAS REALMENTE INSTALADAS (SOMENTE DONO DA OFICINA) ════ -->
+    <div id="blocoReais" style="display:none;background:rgba(255,59,59,0.04);border:1px solid rgba(255,59,59,0.25);border-radius:3px;padding:18px;margin-top:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+        <div>
+          <div style="font-family:var(--fm);font-size:0.7rem;color:var(--danger);letter-spacing:1.5px;font-weight:700;">🔒 PEÇAS REAIS INSTALADAS — ACESSO RESTRITO DONO</div>
+          <div style="font-family:var(--fm);font-size:0.6rem;color:var(--muted);margin-top:2px;">Visível apenas ao proprietário da oficina. Cliente vê somente as peças do orçamento acima.</div>
+        </div>
+        <button type="button" onclick="window.adicionarPecaReal()" style="background:rgba(255,59,59,0.1);border:1px solid rgba(255,59,59,0.4);color:var(--danger);padding:6px 14px;border-radius:3px;font-family:var(--fm);font-size:0.72rem;font-weight:700;cursor:pointer;">+ PEÇA REAL</button>
+      </div>
+      <div style="display:grid;grid-template-columns:110px 1fr 55px 110px 130px 110px 32px;gap:6px;margin-bottom:6px;font-family:var(--fm);font-size:0.6rem;color:var(--muted);text-transform:uppercase;font-weight:bold;">
+        <div>Cód. Real</div><div>Descrição Real</div><div>Qtd</div><div>Fornecedor</div><div>Nota Fiscal</div><div>Valor Compra</div><div></div>
+      </div>
+      <div id="containerPecasReais" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;"></div>
+    </div>
+
+    <!-- ════ BUSCA HISTÓRICO POR PLACA + SERVIÇO/PEÇA ════ -->
+    <div id="blocoHistBusca" style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.12);border-radius:3px;padding:14px;margin-top:12px;">
+      <div style="font-family:var(--fm);font-size:0.7rem;color:var(--cyan);letter-spacing:1.5px;font-weight:700;margin-bottom:10px;">🔍 BUSCAR HISTÓRICO — PLACA + SERVIÇO/PEÇA</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <input class="j-input" id="histBuscaPlaca" placeholder="Placa (ex: ABC-1234)" style="width:140px;flex-shrink:0;font-family:var(--fm);letter-spacing:1px;text-transform:uppercase;">
+        <input class="j-input" id="histBuscaTermo" placeholder="Serviço ou peça (ex: correia dentada, pastilha...)" style="flex:1;min-width:160px;">
+        <button type="button" onclick="window.buscarHistoricoOS()" style="background:var(--cyan);border:none;border-radius:3px;color:#000;font-family:var(--fm);font-size:0.72rem;font-weight:700;padding:0 16px;cursor:pointer;white-space:nowrap;">BUSCAR</button>
+      </div>
+      <div id="histBuscaResultado" style="margin-top:10px;"></div>
     </div>
 
     <div id="areaPgtoOS" style="display:none;background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.2);border-radius:3px;padding:18px;margin-top:12px;">
@@ -1012,9 +1199,6 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
       <div class="form-row cols-2">
         <div class="form-group"><label class="j-label">Próxima Revisão — Data</label><input type="date" class="j-input" id="osProxRev"></div>
         <div class="form-group"><label class="j-label">Próxima Revisão — KM</label><input type="number" class="j-input" id="osProxKm" placeholder="KM para retornar"></div>
-      </div>
-      <div class="form-row cols-1" id="areaEntregaPara" style="display:none;">
-        <div class="form-group"><label class="j-label" style="color:var(--success);">🚘 Entregue Para (nome de quem retirou)</label><input type="text" class="j-input" id="osEntregaPara" placeholder="Ex: Cabo Silva — RG 12.345.678"></div>
       </div>
     </div>
   </div>
@@ -1099,51 +1283,6 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
     <div class="timeline" id="osTimeline"></div>
   </div>
 
-  <!-- TAB 4: PEÇAS REAIS (SOMENTE ADMIN) -->
-  <div class="tab-pane" id="tabOS4">
-    <div style="background:rgba(167,139,250,0.06);border:1px solid rgba(167,139,250,0.25);border-radius:6px;padding:18px;margin-bottom:14px;">
-      <div style="font-family:var(--fd);font-size:1rem;font-weight:700;color:#A78BFA;margin-bottom:4px;">🔒 PEÇAS REAIS TROCADAS (SOMENTE ADMIN/GESTOR)</div>
-      <div style="font-family:var(--fm);font-size:0.7rem;color:var(--muted);margin-bottom:14px;">Estas são as peças com NF/código real efetivamente compradas e trocadas. Não visível para mecânico nem cliente.</div>
-
-      <!-- Busca por placa + termo -->
-      <div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.2);border-radius:4px;padding:14px;margin-bottom:16px;">
-        <div style="font-family:var(--fm);font-size:0.7rem;color:var(--cyan);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">🔍 Buscar histórico por placa + serviço</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <input type="text" class="j-input" id="buscaPlacaHist" placeholder="Ex: ABC1234" style="flex:1;min-width:120px;max-width:160px;">
-          <input type="text" class="j-input" id="buscaTermoHist" placeholder="Ex: freio, pastilha, amortecedor..." style="flex:2;min-width:200px;">
-          <button type="button" class="btn-outline" style="white-space:nowrap;" onclick="window.buscarHistoricoPlaca()">🔍 BUSCAR</button>
-        </div>
-        <div id="resultadoBuscaHist" style="margin-top:10px;"></div>
-      </div>
-
-      <!-- Importação CILIA -->
-      <div style="background:rgba(251,191,36,0.05);border:1px solid rgba(251,191,36,0.2);border-radius:4px;padding:14px;margin-bottom:16px;">
-        <div style="font-family:var(--fm);font-size:0.7rem;color:var(--warn);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">📄 Importar do Sistema CILIA (PDF ou XML)</div>
-        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;">Importe o PDF ou XML do CILIA com código OEM, descrição e preço. Itens são editáveis após importação.</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <input type="file" id="ciliaFileInput" accept=".pdf,.xml,.xlsx,.xls,.csv" style="display:none;" onchange="window.importarCilia(this)">
-          <button type="button" class="btn-ghost" style="background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);color:var(--warn);" onclick="document.getElementById('ciliaFileInput').click()">📂 SELECIONAR ARQUIVO CILIA</button>
-          <span id="ciliaFileName" style="font-family:var(--fm);font-size:0.7rem;color:var(--muted);">Nenhum arquivo selecionado</span>
-        </div>
-        <div id="ciliaPreview" style="margin-top:10px;"></div>
-      </div>
-
-      <!-- Container peças reais -->
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div style="font-family:var(--fm);font-size:0.75rem;color:#A78BFA;text-transform:uppercase;letter-spacing:1px;">Peças efetivamente trocadas</div>
-        <button type="button" class="btn-outline" style="border-color:#A78BFA;color:#A78BFA;font-size:0.7rem;" onclick="window.adicionarPecaReal()">+ ADICIONAR PEÇA REAL</button>
-      </div>
-      <div style="display:grid;grid-template-columns:120px 1fr 60px 90px 90px 32px;gap:8px;margin-bottom:6px;font-family:var(--fm);font-size:0.65rem;color:var(--muted);text-transform:uppercase;">
-        <div>Código OEM</div><div>Descrição</div><div>Qtd</div><div>Custo(R$)</div><div>Venda(R$)</div><div>Del</div>
-      </div>
-      <div id="containerPecasReais" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
-      <div style="display:flex;justify-content:flex-end;align-items:center;gap:14px;padding:10px 14px;background:rgba(167,139,250,0.06);border-radius:4px;border:1px dashed rgba(167,139,250,0.2);">
-        <span style="font-family:var(--fm);font-size:0.7rem;color:var(--muted);">TOTAL PEÇAS REAIS:</span>
-        <span style="font-family:var(--fd);font-size:1.4rem;font-weight:700;color:#A78BFA;">R$ <span id="totalPecasReaisVal">0,00</span></span>
-      </div>
-    </div>
-  </div>
-
   <div class="modal-foot">
     <button class="btn-ghost" id="btnGerarPDFOS" style="display:none;" onclick="window.gerarPDFOS()">📄 EXPORTAR LAUDO PDF</button>
     <button class="btn-ghost" id="btnExportarPMSP" style="display:none;background:rgba(167,139,250,0.1);border:1px solid rgba(167,139,250,0.4);color:#A78BFA;" onclick="window.exportarOrcamentoPMSP()">🛡 EXPORTAR ORÇAMENTO PMSP (XLSX)</button>
@@ -1197,8 +1336,8 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 
       <div class="form-row cols-3">
         <div class="form-group"><label class="j-label">Valor Hora REGISTRADO (R$)</label><input type="number" step="0.01" class="j-input" id="cliGovValorHora" placeholder="222.03"></div>
-        <div class="form-group"><label class="j-label">Desc. Mão Obra (%)</label><input type="number" step="0.1" min="0" max="100" class="j-input" id="cliGovDescMO" placeholder="21" title="Ex: 21 = 21% de desconto sobre M.O."></div>
-        <div class="form-group"><label class="j-label">Desc. Peças (%)</label><input type="number" step="0.1" min="0" max="100" class="j-input" id="cliGovDescPeca" placeholder="20" title="Ex: 20 = 20% de desconto sobre peças"></div>
+        <div class="form-group"><label class="j-label">Desc. Mão Obra (%)</label><input type="number" step="0.1" min="0" max="100" class="j-input" id="cliGovDescMO" placeholder="21" title="Ex: 21 = 21% de desconto na mão de obra"></div>
+        <div class="form-group"><label class="j-label">Desc. Peças (%)</label><input type="number" step="0.1" min="0" max="100" class="j-input" id="cliGovDescPeca" placeholder="20" title="Ex: 20 = 20% de desconto nas peças"></div>
       </div>
 
       <div class="form-row cols-2">
@@ -1890,6 +2029,17 @@ window.popularSelects = function() {
 }
 
 window.filtrarVeiculosOS = function() {
+  // Mostra/oculta blocos governo ao trocar cliente
+  const cliId = (document.getElementById('osCliente')?.value||'');
+  const cli = (window.J?.clientes||[]).find(x=>x.id===cliId);
+  const ehGov = cli?.tipoCliente === 'governo';
+  const blocoDesc = document.getElementById('blocoDescontoOS');
+  const blocoReais = document.getElementById('blocoReais');
+  if (blocoDesc) blocoDesc.style.display = ehGov ? 'block' : 'none';
+  if (blocoReais) {
+    const isDono = (window.J?.perfil === 'admin' || window.J?.isDono === true);
+    blocoReais.style.display = (ehGov && isDono) ? 'block' : 'none';
+  }
   const cid = $v('osCliente'); const tipo = $v('osTipoVeiculo');
   let veics = J.veiculos.filter(v=>v.clienteId===cid);
   if(tipo) veics = veics.filter(v=>v.tipo===tipo);
@@ -1952,8 +2102,9 @@ window.prepCliente = function(mode, id=null) {
       if($('cliGovUnidade')) $('cliGovUnidade').value = c.govUnidade || '';
       if($('cliGovFiscal')) $('cliGovFiscal').value = c.govFiscal || '';
       if($('cliGovValorHora')) $('cliGovValorHora').value = c.govValorHora || '';
-      if($('cliGovDescMO')) $('cliGovDescMO').value = c.govDescMO || '';
-      if($('cliGovDescPeca')) $('cliGovDescPeca').value = c.govDescPeca || '';
+      // Exibe em % inteiro (salvo como decimal 0-1)
+      if($('cliGovDescMO')) $('cliGovDescMO').value = c.govDescMO != null ? (parseFloat(c.govDescMO)*100).toFixed(1) : '';
+      if($('cliGovDescPeca')) $('cliGovDescPeca').value = c.govDescPeca != null ? (parseFloat(c.govDescPeca)*100).toFixed(1) : '';
       if($('cliGovCabecalho')) $('cliGovCabecalho').value = c.govCabecalho || '';
       if($('cliGovOesModelo')) $('cliGovOesModelo').value = c.govOesModelo || '';
     }
@@ -2003,8 +2154,9 @@ window.salvarCliente = async function() {
     p.govUnidade = $v('cliGovUnidade');
     p.govFiscal = $v('cliGovFiscal');
     p.govValorHora = parseFloat(($v('cliGovValorHora') || '0').replace(',', '.')) || 0;
-    p.govDescMO = parseFloat(($v('cliGovDescMO') || '0').replace(',', '.')) || 0;
-    p.govDescPeca = parseFloat(($v('cliGovDescPeca') || '0').replace(',', '.')) || 0;
+    // Campo agora em % inteiro (ex: 21 = 21%) → salva decimal (0.21)
+    p.govDescMO = (parseFloat(($v('cliGovDescMO') || '0').replace(',', '.')) || 0) / 100;
+    p.govDescPeca = (parseFloat(($v('cliGovDescPeca') || '0').replace(',', '.')) || 0) / 100;
     p.govCabecalho = $v('cliGovCabecalho');
     p.govOesModelo = $v('cliGovOesModelo');
   }
