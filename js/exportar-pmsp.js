@@ -63,9 +63,7 @@
     // Cabeçalho institucional (multi-linha do cliente)
     const cabecalhoLinhas = (cli.govCabecalho || '').split(/\r?\n/).filter(l => l.trim());
 
-    // Usa valores JÁ calculados e salvos na OS — não recalcula
-    const descMO = parseFloat(cli.govDescMO || 0);
-    const descPeca = parseFloat(cli.govDescPeca || 0);
+    // Valores brutos salvos; desconto do batalhão aplicado por item abaixo
     const servicos = (os.servicos || []).filter(s => s.desc);
     const pecas = (os.pecas || []).filter(p => p.desc);
 
@@ -103,17 +101,19 @@
     linhas.push([]);
 
     // ═══ TABELA DE SERVIÇOS ═══
+    // Descontos do batalhão (cadastrados no cliente)
+    const pctDescMO   = parseFloat(cli.govDescMO   || 0); // ex: 0.25 = 25%
+    const pctDescPeca = parseFloat(cli.govDescPeca || 0); // ex: 0.20 = 20%
+
     linhas.push(['', 'DESCRIÇÃO DO SISTEMA', '', 'DESCRIÇÃO DO SERVIÇO', 'TMO', 'VALOR TABELA', 'DESC. (%)', 'VALOR COM DESC.']);
     let totalMO = 0;
     let totalTMO = 0;
     servicos.forEach(s => {
-      const tempo = parseFloat(s.tempo || 0);
-      const valorBruto = parseFloat(s.valor || 0); // valor bruto salvo
-      const pctMO = descMO; // já é percentual inteiro (ex: 21)
-      const valorDesc = +(valorBruto * (pctMO / 100)).toFixed(2);
-      const valorFinal = +(valorBruto - valorDesc).toFixed(2);
-      totalMO += valorFinal;
-      totalTMO += tempo;
+      const tempo      = parseFloat(s.tempo || 0);
+      const valorBruto = parseFloat(s.valor || 0);          // valor bruto salvo
+      const valorFinal = +(valorBruto * (1 - pctDescMO)).toFixed(2);
+      totalMO   += valorFinal;
+      totalTMO  += tempo;
       linhas.push([
         '',
         s.sistemaTabela || '',
@@ -121,7 +121,7 @@
         s.desc || '',
         tempo,
         valorBruto,
-        pctMO > 0 ? pctMO + '%' : '',
+        pctDescMO > 0 ? `${(pctDescMO * 100).toFixed(0)}%` : '',
         valorFinal
       ]);
     });
@@ -129,16 +129,12 @@
     linhas.push([]);
 
     // ═══ TABELA DE PEÇAS ═══
-    linhas.push(['GRADE', 'CÓDIGO DA PEÇA (CÓDIGO ORIGINAL)', '', 'DESCRIÇÃO', 'QTD', 'VALOR UNIT. REGISTRADO', 'DESC. (%)', 'VALOR COM DESC.']);
+    linhas.push(['GRADE', 'CÓDIGO DA PEÇA (CÓDIGO ORIGINAL)', '', 'DESCRIÇÃO', 'QTD', 'VALOR UNITÁRIO TABELA', 'DESC. (%)', 'VALOR COM DESC.']);
     let totalPecas = 0;
     pecas.forEach(p => {
-      const qtd = parseFloat(p.qtd || 1);
-      const valorUnit = parseFloat(p.venda || p.valor || 0);
-      const valorBruto = +(qtd * valorUnit).toFixed(2);
-      const pctPeca = descPeca; // já é percentual inteiro (ex: 20)
-      const valorDescUnit = +(valorUnit * (pctPeca / 100)).toFixed(2);
-      const valorUnitFinal = +(valorUnit - valorDescUnit).toFixed(2);
-      const valorFinal = +(qtd * valorUnitFinal).toFixed(2);
+      const qtd        = parseFloat(p.qtd || 1);
+      const valorUnit  = parseFloat(p.venda || p.valor || 0);
+      const valorFinal = +(qtd * valorUnit * (1 - pctDescPeca)).toFixed(2);
       totalPecas += valorFinal;
       linhas.push([
         '',
@@ -147,7 +143,7 @@
         p.desc || '',
         qtd,
         valorUnit,
-        pctPeca > 0 ? pctPeca + '%' : '',
+        pctDescPeca > 0 ? `${(pctDescPeca * 100).toFixed(0)}%` : '',
         valorFinal
       ]);
     });
