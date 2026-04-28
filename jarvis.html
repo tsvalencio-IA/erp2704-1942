@@ -2798,8 +2798,7 @@ function _buildContextoIA() {
     `=== EQUIPE (${(J.equipe||[]).length} funcionários) ===`,
     equCtx || 'Sem funcionários cadastrados.',
     `=== FIM DO CONTEXTO ===`
-  ].join('
-');
+  ].join('\n');
 }
 
 async function _jiaChamar(pergunta) {
@@ -2839,8 +2838,7 @@ ${ctx}`;
     const resp = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!resp) throw new Error('Resposta vazia da IA.');
     _jiaHist.push({r:'bot', t:resp});
-    lidDiv.innerHTML = `<strong>thIAguinho:</strong> ${resp.replace(/
-/g,'<br>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')}`;
+    lidDiv.innerHTML = `<strong>thIAguinho:</strong> ${resp.replace(/\n/g,'<br>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')}`;
   } catch(e) {
     lidDiv.innerHTML = `<strong>thIAguinho:</strong> ❌ Erro: ${e.message}`;
   }
