@@ -1561,20 +1561,17 @@ async function _ciliaProcessarPDF(file) {
       let lastY = null;
       for (const item of items) {
         const y = Math.round(item.transform[5]);
-        if (lastY !== null && Math.abs(y - lastY) > 5) textoTotal += '
-';
+        if (lastY !== null && Math.abs(y - lastY) > 5) textoTotal += '\n';
         textoTotal += item.str + ' ';
         lastY = y;
       }
-      textoTotal += '
-';
+      textoTotal += '\n';
     }
 
     // Tenta extrair linhas com padrão: CODIGO  DESCRICAO  QTD  VALOR
     // Ex: "5207381  AMORTECEDOR DIANT DIR  1  285,90"
     const pecas = [];
-    const linhas = textoTotal.split('
-').map(l => l.trim()).filter(Boolean);
+    const linhas = textoTotal.split('\n').map(l => l.trim()).filter(Boolean);
 
     for (const linha of linhas) {
       // Padrão Cília: código alfanumérico, descrição, qtd inteiro, valor decimal
@@ -1611,4 +1608,3 @@ async function _ciliaProcessarPDF(file) {
     if (typeof window.toast === 'function') window.toast('Erro ao ler PDF Cília: ' + err.message, 'err');
   }
 }
-
